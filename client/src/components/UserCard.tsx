@@ -40,9 +40,9 @@ export default function UserCard({ userId, nickname, username, avatar, bio, simi
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-sm truncate" style={{ color: '#1a1a2e' }}>{nickname}</h3>
-            <span className="text-xs opacity-40">@{username}</span>
+          <div className="truncate">
+            <h3 className="font-semibold text-sm inline" style={{ color: '#1a1a2e' }}>{nickname}</h3>
+            <span className="text-xs opacity-40 ml-1">@{username}</span>
           </div>
 
           {bio && (
@@ -50,18 +50,18 @@ export default function UserCard({ userId, nickname, username, avatar, bio, simi
           )}
         </div>
 
-        <div className="flex-shrink-0 flex items-start gap-2">
+        <div className="flex-shrink-0 flex items-start gap-1">
           {similarityPercent !== undefined && (
-            <div className="text-right mr-2">
-              <div className="text-lg font-bold" style={{ color: similarityPercent >= 70 ? '#22c55e' : similarityPercent >= 40 ? '#f59e0b' : '#94a3b8' }}>
+            <div className="text-right -mt-0.5">
+              <div className="text-sm font-bold leading-tight" style={{ color: similarityPercent >= 70 ? '#22c55e' : similarityPercent >= 40 ? '#f59e0b' : '#94a3b8' }}>
                 {similarityPercent}%
               </div>
-              <div className="text-[10px] opacity-40 uppercase tracking-wider">Совпадение</div>
+              <div className="text-[9px] opacity-40 uppercase tracking-wider leading-tight">Совп.</div>
             </div>
           )}
           <button
             onClick={startSession}
-            className="btn-primary !py-1.5 !px-3 !text-xs !rounded-xl whitespace-nowrap"
+            className="btn-primary !py-1.5 !px-2.5 !text-[11px] !rounded-xl whitespace-nowrap"
           >
             Сессия
           </button>

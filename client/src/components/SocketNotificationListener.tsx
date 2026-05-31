@@ -40,8 +40,7 @@ export default function SocketNotificationListener() {
         action: {
           label: 'Принять',
           onClick: () => {
-            socket.emit('call:accepted', { to: from, sessionId });
-            navigate(`/session/${sessionId}`);
+            navigate(`/session/${sessionId}`, { state: { acceptCall: { callerId: from, sessionId } } });
           },
         },
       });
