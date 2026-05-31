@@ -313,24 +313,7 @@ export function searchUsersBySkills(query: string, currentUserId: string, filter
               });
 
               matchedUsers.sort((a: MatchResult, b: MatchResult) => b.similarity - a.similarity);
-
-              if (matchedUsers.length >= 20) {
-                return resolve(matchedUsers.slice(0, 20));
-              }
-
-              const excludeIds = matchedUsers.map((u: MatchResult) => u.userId);
-              const exPlaceholders = [currentUserId, ...excludeIds].map(() => '?').join(',');
-              db.all(
-                `SELECT id, username, nickname, avatar, bio, search_type FROM users
-                 WHERE id NOT IN (${exPlaceholders}) ${typeClause}
-                 ORDER BY RANDOM() LIMIT ?`,
-                [...[currentUserId, ...excludeIds], ...typeParams, 20 - matchedUsers.length],
-                (err, fillRows: any[]) => {
-                  if (err) return reject(err);
-                  const filled = (fillRows || []).map((u: any) => buildMatchResult(u, 0, []));
-                  resolve([...matchedUsers, ...filled].slice(0, 20));
-                }
-              );
+              resolve(matchedUsers.slice(0, 20));
             });
           }
         );
