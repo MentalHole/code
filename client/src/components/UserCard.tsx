@@ -21,6 +21,11 @@ export default function UserCard({ userId, nickname, username, avatar, bio, simi
 
   const similarityPercent = similarity !== undefined ? Math.round(similarity * 100) : undefined;
 
+  const startSession = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate(`/profile/${userId}`);
+  };
+
   return (
     <div
       className="glass-card rounded-2xl p-5 transition-all duration-300 hover:shadow-lg hover:-translate-y-1 cursor-pointer"
@@ -45,14 +50,22 @@ export default function UserCard({ userId, nickname, username, avatar, bio, simi
           )}
         </div>
 
-        {similarityPercent !== undefined && (
-          <div className="flex-shrink-0 text-right">
-            <div className="text-lg font-bold" style={{ color: similarityPercent >= 70 ? '#22c55e' : similarityPercent >= 40 ? '#f59e0b' : '#94a3b8' }}>
-              {similarityPercent}%
+        <div className="flex-shrink-0 flex items-start gap-2">
+          {similarityPercent !== undefined && (
+            <div className="text-right mr-2">
+              <div className="text-lg font-bold" style={{ color: similarityPercent >= 70 ? '#22c55e' : similarityPercent >= 40 ? '#f59e0b' : '#94a3b8' }}>
+                {similarityPercent}%
+              </div>
+              <div className="text-[10px] opacity-40 uppercase tracking-wider">Совпадение</div>
             </div>
-            <div className="text-[10px] opacity-40 uppercase tracking-wider">Совпадение</div>
-          </div>
-        )}
+          )}
+          <button
+            onClick={startSession}
+            className="btn-primary !py-1.5 !px-3 !text-xs !rounded-xl whitespace-nowrap"
+          >
+            Сессия
+          </button>
+        </div>
       </div>
 
       {sharedSkills && sharedSkills.length > 0 && (

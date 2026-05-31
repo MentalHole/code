@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { NotificationProvider } from './context/NotificationContext';
+import SocketNotificationListener from './components/SocketNotificationListener';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
 import Login from './pages/Login';
@@ -36,8 +38,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Navbar />
-        <AppRoutes />
+        <NotificationProvider>
+          <Navbar />
+          <SocketNotificationListener />
+          <AppRoutes />
+        </NotificationProvider>
       </AuthProvider>
     </BrowserRouter>
   );

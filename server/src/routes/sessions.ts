@@ -25,6 +25,17 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
         res.status(500).json({ error: 'Ошибка создания сессии' });
         return;
       }
+
+      db.get(`SELECT nickname FROM users WHERE id = ?`, [req.userId], (err2, host: any) => {
+        if (!err2 && host) {
+          const io = req.app.get('io');
+          io.to(`user:${guestId}`).emit('notification:session_created', {
+            sessionId: id,
+            fromNickname: host.nickname,
+          });
+        }
+      });
+
       res.status(201).json({ id, startTime, endTime });
     }
   );
@@ -59,21 +70,44 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
 });
 
 router.post('/:id/end', authMiddleware, (req: AuthRequest, res: Response) => {
-  db.run(
-    `UPDATE sessions SET status = 'completed' WHERE id = ? AND (host_id = ? OR guest_id = ?)`,
-    [req.params.id, req.userId, req.userId],
-    function (err) {
-      if (err) {
-        res.status(500).json({ error: 'Ошибка завершения сессии' });
-        return;
-      }
-      if (this.changes === 0) {
-        res.status(404).json({ error: 'Сессия не найдена' });
-        return;
-      }
-      res.json({ message: 'Сессия завершена' });
+  db.get(`SELECT host_id, guest_id FROM sessions WHERE id = ?`, [req.params.id], (err2, session: any) => {
+    if (err2 || !session) {
+      res.status(404).json({ error: 'Сессия не найдена' });
+      return;
     }
-  );
+
+    db.run(
+      `UPDATE sessions SET status = 'completed' WHERE id = ? AND (host_id = ? OR guest_id = ?)`,
+      [req.params.id, req.userId, req.userId],
+      function (err) {
+        if (err) {
+          res.status(500).json({ error: 'Ошибка завершения сессии' });
+          return;
+        }
+        if (this.changes === 0) {
+          res.status(404).json({ error: 'Сессия не найдена' });
+          return;
+        }
+
+        const otherUserId = session.host_id === req.userId ? session.guest_id : session.host_id;
+        db.get(`SELECT nickname FROM users WHERE id = ?`, [req.userId], (err3, me: any) => {
+          if (!err3 && me) {
+            const io = req.app.get('io');
+            io.to(`user:${otherUserId}`).emit('notification:session_ended', {
+              sessionId: req.params.id,
+              byNickname: me.nickname,
+            });
+            io.to(`user:${req.userId}`).emit('notification:session_ended', {
+              sessionId: req.params.id,
+              byNickname: me.nickname,
+            });
+          }
+        });
+
+        res.json({ message: 'Сессия завершена' });
+      }
+    );
+  });
 });
 
 export default router;

@@ -34,6 +34,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.set('io', io);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/skills', skillRoutes);
@@ -64,6 +65,7 @@ io.on('connection', (socket) => {
     onlineUsers.set(userId, socket.id);
     socket.data.userId = userId;
     socket.data.nickname = nickname;
+    socket.join(`user:${userId}`);
     io.emit('users:online', Array.from(onlineUsers.keys()));
   });
 
@@ -108,6 +110,45 @@ io.on('connection', (socket) => {
 
   socket.on('session:started', ({ sessionId }) => {
     io.to(`session:${sessionId}`).emit('session:started', { sessionId });
+  });
+
+  socket.on('call:request', ({ to, mode, sessionId }) => {
+    const targetSocket = onlineUsers.get(to);
+    if (targetSocket) {
+      io.to(targetSocket).emit('call:incoming', {
+        from: socket.data.userId,
+        fromNickname: socket.data.nickname,
+        mode,
+        sessionId,
+      });
+    }
+  });
+
+  socket.on('call:accepted', ({ to, sessionId }) => {
+    const targetSocket = onlineUsers.get(to);
+    if (targetSocket) {
+      io.to(targetSocket).emit('call:accepted', { sessionId });
+    }
+  });
+
+  socket.on('call:declined', ({ to }) => {
+    const targetSocket = onlineUsers.get(to);
+    if (targetSocket) {
+      io.to(targetSocket).emit('call:declined', {
+        from: socket.data.userId,
+        fromNickname: socket.data.nickname,
+      });
+    }
+  });
+
+  socket.on('notification:session_created', ({ to, sessionId, initiatorNickname }) => {
+    const targetSocket = onlineUsers.get(to);
+    if (targetSocket) {
+      io.to(targetSocket).emit('notification:session_created', {
+        sessionId,
+        fromNickname: initiatorNickname,
+      });
+    }
   });
 
   socket.on('disconnect', () => {

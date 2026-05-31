@@ -40,6 +40,27 @@ router.post('/:sessionId', authMiddleware, (req: AuthRequest, res: Response) => 
         res.status(500).json({ error: 'Ошибка отправки сообщения' });
         return;
       }
+
+      db.get(
+        `SELECT host_id, guest_id FROM sessions WHERE id = ?`,
+        [req.params.sessionId],
+        (err2, session: any) => {
+          if (!err2 && session) {
+            const otherId = session.host_id === req.userId ? session.guest_id : session.host_id;
+            db.get(`SELECT nickname FROM users WHERE id = ?`, [req.userId], (err3, sender: any) => {
+              if (!err3 && sender) {
+                const io = req.app.get('io');
+                io.to(`user:${otherId}`).emit('notification:message', {
+                  sessionId: req.params.sessionId,
+                  fromNickname: sender.nickname,
+                  content: content.substring(0, 80),
+                });
+              }
+            });
+          }
+        }
+      );
+
       res.status(201).json({ id, content, sender_id: req.userId, type: type || 'text' });
     }
   );

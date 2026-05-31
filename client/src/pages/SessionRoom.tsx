@@ -29,6 +29,7 @@ export default function SessionRoom() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const [inCall, setInCall] = useState(false);
+  const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'ringing' | 'connected'>('idle');
 
   useEffect(() => {
     if (!id) return;
@@ -43,6 +44,112 @@ export default function SessionRoom() {
     }
   }, [id]);
 
+  const getMediaStream = async (mode: 'audio' | 'video') => {
+    return navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: mode === 'video',
+    });
+  };
+
+  const createPeer = useCallback((stream: MediaStream, otherUserId: string) => {
+    const socket = getSocket();
+    if (!socket) return null;
+
+    const peer = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+
+    stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+    peer.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+
+    peer.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('signal:ice-candidate', { to: otherUserId, candidate: event.candidate });
+      }
+    };
+
+    peerRef.current = peer;
+    return peer;
+  }, []);
+
+  const setupPeerFromOffer = useCallback(async (from: string, offer: any) => {
+    if (!user || !session) return;
+    const otherUserId = session.host_id === user.id ? session.guest_id : session.host_id;
+    if (from !== otherUserId) return;
+
+    try {
+      const mode = offer.sdp?.includes('video') ? 'video' : 'audio';
+      setMediaMode(mode);
+      setMicOn(true);
+      setCamOn(mode === 'video');
+      setCallStatus('ringing');
+
+      const stream = await getMediaStream(mode);
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const socket = getSocket();
+      if (!socket) return;
+
+      const peer = createPeer(stream, otherUserId);
+      if (!peer) return;
+
+      await peer.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      socket.emit('signal:answer', { to: from, answer });
+      setInCall(true);
+      setCallStatus('connected');
+    } catch (err) {
+      console.error('Setup from offer error:', err);
+    }
+  }, [user, session, createPeer]);
+
+  useEffect(() => {
+    if (!session || !user) return;
+    const socket = getSocket();
+    if (!socket) return;
+
+    const otherUserId = session.host_id === user.id ? session.guest_id : session.host_id;
+
+    const onOffer = async ({ from, offer }: any) => {
+      if (from !== otherUserId) return;
+      if (!peerRef.current) {
+        await setupPeerFromOffer(from, offer);
+      } else {
+        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerRef.current.createAnswer();
+        await peerRef.current.setLocalDescription(answer);
+        socket.emit('signal:answer', { to: from, answer });
+      }
+    };
+
+    const onAnswer = async ({ from, answer }: any) => {
+      if (from !== otherUserId || !peerRef.current) return;
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+      setCallStatus('connected');
+    };
+
+    const onIceCandidate = async ({ from, candidate }: any) => {
+      if (from !== otherUserId || !peerRef.current) return;
+      await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+    };
+
+    socket.on('signal:offer', onOffer);
+    socket.on('signal:answer', onAnswer);
+    socket.on('signal:ice-candidate', onIceCandidate);
+
+    return () => {
+      socket.off('signal:offer', onOffer);
+      socket.off('signal:answer', onAnswer);
+      socket.off('signal:ice-candidate', onIceCandidate);
+    };
+  }, [session, user, setupPeerFromOffer]);
+
   const endSession = async () => {
     if (!id) return;
     try {
@@ -54,71 +161,52 @@ export default function SessionRoom() {
   };
 
   const startCall = async (mode: 'audio' | 'video') => {
+    if (!session || !user) return;
+    const otherUserId = session.host_id === user.id ? session.guest_id : session.host_id;
+    const socket = getSocket();
+    if (!socket) return;
+
     setMediaMode(mode);
     setMicOn(true);
     setCamOn(mode === 'video');
+    setCallStatus('calling');
+
+    socket.emit('call:request', { to: otherUserId, mode, sessionId: session.id });
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: mode === 'video',
-      });
+      const stream = await getMediaStream(mode);
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      const peer = createPeer(stream, otherUserId);
+      if (!peer) return;
 
-      const socket = getSocket();
-      if (!socket || !session) return;
+      const onAccepted = async ({ sessionId: sid }: any) => {
+        if (sid !== session.id) return;
+        socket.off('call:accepted', onAccepted);
+        socket.off('call:declined', onDeclined);
 
-      const otherUserId = session.host_id === user?.id ? session.guest_id : session.host_id;
-
-      const peer = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      });
-
-      stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-      peer.ontrack = (event) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        }
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        socket.emit('signal:offer', { to: otherUserId, offer });
+        setInCall(true);
+        setCallStatus('connected');
       };
 
-      peer.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit('signal:ice-candidate', { to: otherUserId, candidate: event.candidate });
-        }
+      const onDeclined = () => {
+        socket.off('call:accepted', onAccepted);
+        socket.off('call:declined', onDeclined);
+        setCallStatus('idle');
+        setMediaMode('none');
+        endCall();
       };
 
-      peerRef.current = peer;
-
-      socket.on('signal:offer', async ({ from, offer }) => {
-        if (from !== otherUserId) return;
-        await peer.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit('signal:answer', { to: from, answer });
-      });
-
-      socket.on('signal:answer', async ({ from, answer }) => {
-        if (from !== otherUserId) return;
-        await peer.setRemoteDescription(new RTCSessionDescription(answer));
-      });
-
-      socket.on('signal:ice-candidate', async ({ from, candidate }) => {
-        if (from !== otherUserId) return;
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      });
-
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      socket.emit('signal:offer', { to: otherUserId, offer });
-
+      socket.on('call:accepted', onAccepted);
+      socket.on('call:declined', onDeclined);
       setInCall(true);
     } catch (err) {
       console.error('Media error:', err);
       setMediaMode('none');
+      setCallStatus('idle');
     }
   };
 
@@ -159,6 +247,7 @@ export default function SessionRoom() {
     }
     setInCall(false);
     setMediaMode('none');
+    setCallStatus('idle');
   }, []);
 
   if (loading) {
@@ -189,7 +278,7 @@ export default function SessionRoom() {
           </div>
           <div className="flex items-center gap-3">
             {isActive && session.end_time && (
-              <SessionTimer endTime={session.end_time} onEnd={() => { }} />
+              <SessionTimer endTime={session.end_time} onEnd={() => {}} />
             )}
             {isActive && (
               <button onClick={endSession} className="btn-secondary !py-2 !px-4 !text-xs !border-red-200 !text-red-600 hover:!bg-red-50">
@@ -206,7 +295,7 @@ export default function SessionRoom() {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-full">
           <div className="lg:col-span-3 flex flex-col gap-4">
-            {inCall ? (
+            {inCall || callStatus === 'calling' || callStatus === 'ringing' ? (
               <div className="glass-card rounded-2xl overflow-hidden flex-1 flex flex-col">
                 <div className="flex-1 relative bg-black/5">
                   <video
@@ -222,11 +311,27 @@ export default function SessionRoom() {
                     muted
                     className="absolute bottom-4 right-4 w-36 h-24 object-cover rounded-xl border-2 border-white shadow-lg"
                   />
-                  {!remoteVideoRef.current?.srcObject && (
+                  {callStatus === 'calling' && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-5xl mb-3 animate-pulse">📞</div>
+                        <p className="text-sm opacity-50">Звоним...</p>
+                      </div>
+                    </div>
+                  )}
+                  {callStatus === 'ringing' && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-5xl mb-3 animate-bounce">🔔</div>
+                        <p className="text-sm opacity-50">Входящий звонок...</p>
+                      </div>
+                    </div>
+                  )}
+                  {callStatus === 'connected' && !remoteVideoRef.current?.srcObject && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center">
                         <div className="text-5xl mb-3">📡</div>
-                        <p className="text-sm opacity-50">Ожидание подключения союзника...</p>
+                        <p className="text-sm opacity-50">Подключение союзника...</p>
                       </div>
                     </div>
                   )}
@@ -258,14 +363,26 @@ export default function SessionRoom() {
                       </svg>
                     </button>
                   )}
-                  <button
-                    onClick={endCall}
-                    className="w-12 h-12 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
-                    </svg>
-                  </button>
+                  {inCall && (
+                    <button
+                      onClick={endCall}
+                      className="w-12 h-12 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
+                      </svg>
+                    </button>
+                  )}
+                  {callStatus === 'calling' && (
+                    <button
+                      onClick={endCall}
+                      className="w-12 h-12 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
