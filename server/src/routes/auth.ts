@@ -49,14 +49,15 @@ router.post('/register', (req: AuthRequest, res: Response) => {
 });
 
 router.post('/login', (req: AuthRequest, res: Response) => {
-  const { username, password } = req.body;
+  const { username, email, password } = req.body;
+  const credential = username || email;
 
-  if (!username || !password) {
-    res.status(400).json({ error: 'Имя пользователя и пароль обязательны' });
+  if (!credential || !password) {
+    res.status(400).json({ error: 'Имя пользователя (или email) и пароль обязательны' });
     return;
   }
 
-  db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user: any) => {
+  db.get(`SELECT * FROM users WHERE username = ? OR email = ?`, [credential, credential], (err, user: any) => {
     if (err || !user) {
       res.status(401).json({ error: 'Неверные учётные данные' });
       return;

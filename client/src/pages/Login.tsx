@@ -44,10 +44,10 @@ export default function Login() {
           )}
 
           <div>
-            <label className="text-xs font-semibold opacity-60 mb-1.5 block">Имя пользователя</label>
+            <label className="text-xs font-semibold opacity-60 mb-1.5 block">Имя пользователя или email</label>
             <input
               className="input-field"
-              placeholder="Введите имя пользователя"
+              placeholder="Введите имя пользователя или email"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
