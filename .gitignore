@@ -1,0 +1,8 @@
+node_modules/
+server/dist/
+client/dist/
+server/data/*.db
+server/data/*.db-journal
+*.log
+.env
+.env.local
