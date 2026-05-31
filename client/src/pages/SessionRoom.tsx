@@ -20,18 +20,19 @@ export default function SessionRoom() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [mediaMode, setMediaMode] = useState<'none' | 'audio' | 'video'>('none');
   const [micOn, setMicOn] = useState(false);
   const [camOn, setCamOn] = useState(false);
-  const location = useLocation();
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const acceptedCallRef = useRef(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const [inCall, setInCall] = useState(false);
-  const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'ringing' | 'connected'>('idle');
+  const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'ringing' | 'connecting' | 'connected'>('idle');
 
   useEffect(() => {
     if (!id) return;
@@ -53,6 +54,25 @@ export default function SessionRoom() {
     });
   };
 
+  const endCall = useCallback(() => {
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+    if (localVideoRef.current?.srcObject) {
+      (localVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current?.srcObject) {
+      (remoteVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+      remoteVideoRef.current.srcObject = null;
+    }
+    setInCall(false);
+    setRemoteStream(null);
+    setMediaMode('none');
+    setCallStatus('idle');
+  }, []);
+
   const createPeer = useCallback((stream: MediaStream, otherUserId: string) => {
     const socket = getSocket();
     if (!socket) return null;
@@ -67,6 +87,7 @@ export default function SessionRoom() {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
+      setRemoteStream(event.streams[0]);
     };
 
     peer.onicecandidate = (event) => {
@@ -75,9 +96,19 @@ export default function SessionRoom() {
       }
     };
 
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'connected') {
+        setCallStatus('connected');
+        setInCall(true);
+      } else if (peer.connectionState === 'failed') {
+        console.error('WebRTC connection failed');
+        endCall();
+      }
+    };
+
     peerRef.current = peer;
     return peer;
-  }, []);
+  }, [endCall]);
 
   const setupPeerFromOffer = useCallback(async (from: string, offer: any) => {
     if (!user || !session) return;
@@ -104,12 +135,12 @@ export default function SessionRoom() {
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
       socket.emit('signal:answer', { to: from, answer });
-      setInCall(true);
-      setCallStatus('connected');
+      setCallStatus('connecting');
     } catch (err) {
       console.error('Setup from offer error:', err);
+      endCall();
     }
-  }, [user, session, createPeer]);
+  }, [user, session, createPeer, endCall]);
 
   useEffect(() => {
     if (!session || !user) return;
@@ -120,25 +151,21 @@ export default function SessionRoom() {
 
     const onOffer = async ({ from, offer }: any) => {
       if (from !== otherUserId) return;
-      if (!peerRef.current) {
-        await setupPeerFromOffer(from, offer);
-      } else {
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerRef.current.createAnswer();
-        await peerRef.current.setLocalDescription(answer);
-        socket.emit('signal:answer', { to: from, answer });
-      }
+      await setupPeerFromOffer(from, offer);
     };
 
     const onAnswer = async ({ from, answer }: any) => {
       if (from !== otherUserId || !peerRef.current) return;
       await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-      setCallStatus('connected');
     };
 
     const onIceCandidate = async ({ from, candidate }: any) => {
       if (from !== otherUserId || !peerRef.current) return;
-      await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      try {
+        await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error('ICE candidate error:', err);
+      }
     };
 
     socket.on('signal:offer', onOffer);
@@ -159,7 +186,7 @@ export default function SessionRoom() {
       socket.off('signal:answer', onAnswer);
       socket.off('signal:ice-candidate', onIceCandidate);
     };
-  }, [session, user, setupPeerFromOffer]);
+  }, [session, user, setupPeerFromOffer, endCall]);
 
   const endSession = async () => {
     if (!id) return;
@@ -199,24 +226,20 @@ export default function SessionRoom() {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
         socket.emit('signal:offer', { to: otherUserId, offer });
-        setInCall(true);
-        setCallStatus('connected');
+        setCallStatus('connecting');
       };
 
       const onDeclined = () => {
         socket.off('call:accepted', onAccepted);
         socket.off('call:declined', onDeclined);
-        setCallStatus('idle');
-        setMediaMode('none');
         endCall();
       };
 
-        socket.on('call:accepted', onAccepted);
-        socket.on('call:declined', onDeclined);
-      } catch (err) {
+      socket.on('call:accepted', onAccepted);
+      socket.on('call:declined', onDeclined);
+    } catch (err) {
       console.error('Media error:', err);
-      setMediaMode('none');
-      setCallStatus('idle');
+      endCall();
     }
   };
 
@@ -241,24 +264,6 @@ export default function SessionRoom() {
       }
     }
   };
-
-  const endCall = useCallback(() => {
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-    if (localVideoRef.current?.srcObject) {
-      (localVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current?.srcObject) {
-      (remoteVideoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-      remoteVideoRef.current.srcObject = null;
-    }
-    setInCall(false);
-    setMediaMode('none');
-    setCallStatus('idle');
-  }, []);
 
   if (loading) {
     return (
@@ -305,7 +310,7 @@ export default function SessionRoom() {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-full">
           <div className="lg:col-span-3 flex flex-col gap-4">
-            {inCall || callStatus === 'calling' || callStatus === 'ringing' ? (
+            {inCall || callStatus === 'calling' || callStatus === 'ringing' || callStatus === 'connecting' ? (
               <div className="glass-card rounded-2xl overflow-hidden flex-1 flex flex-col">
                 <div className="flex-1 relative bg-black/5">
                   <video
@@ -337,7 +342,7 @@ export default function SessionRoom() {
                       </div>
                     </div>
                   )}
-                  {callStatus === 'connected' && !remoteVideoRef.current?.srcObject && (
+                  {(callStatus === 'connecting' || callStatus === 'connected') && !remoteStream && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center">
                         <div className="text-5xl mb-3">📡</div>
@@ -373,23 +378,17 @@ export default function SessionRoom() {
                       </svg>
                     </button>
                   )}
-                  {inCall && (
+                  {(inCall || callStatus === 'calling' || callStatus === 'connecting') && (
                     <button
                       onClick={endCall}
                       className="w-12 h-12 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
-                      </svg>
-                    </button>
-                  )}
-                  {callStatus === 'calling' && (
-                    <button
-                      onClick={endCall}
-                      className="w-12 h-12 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        {callStatus === 'connected' && inCall ? (
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
+                        ) : (
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        )}
                       </svg>
                     </button>
                   )}
