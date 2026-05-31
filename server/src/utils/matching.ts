@@ -48,19 +48,70 @@ interface MatchResult {
   matchReason: string;
 }
 
+function buildTypeClause(userSearchType: string, filterType?: string): { clause: string; params: string[] } {
+  if (filterType === 'student' || filterType === 'mentor') {
+    return { clause: `AND (search_type = ? OR search_type = 'both')`, params: [filterType] };
+  } else if (userSearchType !== 'both') {
+    const opposite = userSearchType === 'student' ? 'mentor' : 'student';
+    return { clause: `AND (search_type = ? OR search_type = 'both')`, params: [opposite] };
+  }
+  return { clause: '', params: [] };
+}
+
+function buildMatchResult(user: any, similarity: number, sharedSkills: { name: string; color: string }[]): MatchResult {
+  let matchReason = '';
+  if (similarity > 0) {
+    if (similarity >= 0.8) matchReason = 'Отличное совпадение! Очень похожий набор навыков.';
+    else if (similarity >= 0.6) matchReason = 'Прекрасное совпадение! Сильное пересечение навыков.';
+    else if (similarity >= 0.4) matchReason = 'Хорошее совпадение! Есть общие навыки.';
+    else matchReason = 'Некоторые общие интересы.';
+  } else {
+    matchReason = 'Нет общих навыков, но возможно интересный собеседник!';
+  }
+  return {
+    userId: user.id,
+    username: user.username,
+    nickname: user.nickname,
+    avatar: user.avatar || '',
+    bio: user.bio || '',
+    searchType: user.search_type || 'both',
+    similarity,
+    sharedSkills: sharedSkills.slice(0, 5),
+    matchReason,
+  };
+}
+
+function getAllUsersExcept(userId: string, excludeIds: string[], limit: number, typeClause: string, typeParams: string[]): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const exPlaceholders = [userId, ...excludeIds].map(() => '?').join(',');
+    db.all(
+      `SELECT id, username, nickname, avatar, bio, search_type FROM users
+       WHERE id NOT IN (${exPlaceholders}) ${typeClause}
+       ORDER BY RANDOM() LIMIT ?`,
+      [...[userId, ...excludeIds], ...typeParams, limit],
+      (err, rows: any[]) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      }
+    );
+  });
+}
+
 export function findMatchesForUser(userId: string, limit: number = 20, filterType?: string): Promise<MatchResult[]> {
   return new Promise((resolve, reject) => {
     db.get(`SELECT search_type FROM users WHERE id = ?`, [userId], (err, currentUser: any) => {
       if (err) return reject(err);
       const userSearchType = currentUser?.search_type || 'both';
+      const typeInfo = buildTypeClause(userSearchType, filterType);
 
       db.all(
         `SELECT user_id, skill_id, proficiency FROM user_skills WHERE user_id = ?`,
         [userId],
         (err, userSkillRows: any[]) => {
           if (err) return reject(err);
+
           if (!userSkillRows || userSkillRows.length === 0) {
-            return getFallbackMatches(userId, limit, filterType).then(resolve).catch(reject);
+            return getFallbackMatches(userId, limit, userSearchType, filterType).then(resolve).catch(reject);
           }
 
           const userVector = buildSkillVector(userSkillRows);
@@ -83,24 +134,14 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
 
               const uids = Object.keys(userScores);
               if (uids.length === 0) {
-                return getFallbackMatches(userId, limit, filterType).then(resolve).catch(reject);
+                return getFallbackMatches(userId, limit, userSearchType, filterType).then(resolve).catch(reject);
               }
 
               const uidPlaceholders = uids.map(() => '?').join(',');
-              let typeFilter = '';
-              const params: any[] = [];
-              if (filterType === 'student' || filterType === 'mentor') {
-                typeFilter = `AND (search_type = ? OR search_type = 'both')`;
-                params.push(filterType);
-              } else if (userSearchType !== 'both') {
-                const opposite = userSearchType === 'student' ? 'mentor' : 'student';
-                typeFilter = `AND (search_type = ? OR search_type = 'both')`;
-                params.push(opposite);
-              }
-
               db.all(
-                `SELECT id, username, nickname, avatar, bio, search_type FROM users WHERE id IN (${uidPlaceholders}) ${typeFilter}`,
-                [...uids, ...params],
+                `SELECT id, username, nickname, avatar, bio, search_type FROM users
+                 WHERE id IN (${uidPlaceholders}) ${typeInfo.clause}`,
+                [...uids, ...typeInfo.params],
                 (err, users: any[]) => {
                   if (err) return reject(err);
 
@@ -112,17 +153,15 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
                     .filter(uid => validUserIds.has(uid))
                     .map(uid => ({
                       userId: uid,
-                      vector: buildSkillVector(userScores[uid]),
                       similarity: cosineSimilarity(userVector, buildSkillVector(userScores[uid])),
-                    }))
-                    .filter(s => s.similarity > 0);
+                    }));
 
                   scored.sort((a, b) => b.similarity - a.similarity);
-                  const topCandidates = scored.slice(0, limit);
 
-                  if (topCandidates.length === 0) {
-                    return getFallbackMatches(userId, limit, filterType).then(resolve).catch(reject);
-                  }
+                  const matching = scored.filter(s => s.similarity > 0);
+                  const nonMatching = scored.filter(s => s.similarity === 0);
+
+                  const matchingUsers = matching.slice(0, limit);
 
                   const skillIds = [...new Set(allRows.map((r: any) => r.skill_id))];
                   const skillPlaceholders = skillIds.map(() => '?').join(',');
@@ -134,32 +173,46 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
                       const skillMap: any = {};
                       for (const s of skillMapRows) skillMap[s.id] = s;
 
-                      const results: MatchResult[] = topCandidates.map(c => {
+                      const results: MatchResult[] = matchingUsers.map(c => {
                         const u = userMap[c.userId];
                         const shared = allRows
                           .filter((r: any) => r.user_id === c.userId && userSkillIds.includes(r.skill_id) && skillMap[r.skill_id])
                           .map((r: any) => ({ name: skillMap[r.skill_id].name, color: skillMap[r.skill_id].color }));
-
-                        let matchReason = '';
-                        if (c.similarity >= 0.8) matchReason = 'Отличное совпадение! Очень похожий набор навыков.';
-                        else if (c.similarity >= 0.6) matchReason = 'Прекрасное совпадение! Сильное пересечение навыков.';
-                        else if (c.similarity >= 0.4) matchReason = 'Хорошее совпадение! Есть общие навыки.';
-                        else matchReason = 'Некоторые общие интересы.';
-
-                        return {
-                          userId: c.userId,
-                          username: u?.username || 'неизвестно',
-                          nickname: u?.nickname || 'Неизвестно',
-                          avatar: u?.avatar || '',
-                          bio: u?.bio || '',
-                          searchType: u?.search_type || 'both',
-                          similarity: Math.round(c.similarity * 100) / 100,
-                          sharedSkills: shared.slice(0, 5),
-                          matchReason,
-                        };
+                        return buildMatchResult(u, Math.round(c.similarity * 100) / 100, shared);
                       });
 
-                      resolve(results);
+                      if (results.length >= limit) return resolve(results);
+
+                      const matchedIds = matchingUsers.map(m => m.userId);
+                      const nonMatchedIds = nonMatching.map(n => n.userId);
+                      const fillNeeded = limit - results.length;
+
+                      if (nonMatchedIds.length > 0) {
+                        const shuffled = [...nonMatchedIds].sort(() => Math.random() - 0.5);
+                        const fillIds = shuffled.slice(0, fillNeeded);
+                        for (const uid of fillIds) {
+                          const u = userMap[uid];
+                          if (u) {
+                            results.push(buildMatchResult(u, 0, []));
+                          }
+                        }
+                      }
+
+                      if (results.length < limit) {
+                        const excludeIds = [...matchedIds, ...nonMatchedIds];
+                        getAllUsersExcept(userId, excludeIds, limit - results.length, typeInfo.clause, typeInfo.params)
+                          .then((extraUsers) => {
+                            for (const u of extraUsers) {
+                              if (results.length < limit) {
+                                results.push(buildMatchResult(u, 0, []));
+                              }
+                            }
+                            resolve(results);
+                          })
+                          .catch(reject);
+                      } else {
+                        resolve(results);
+                      }
                     }
                   );
                 }
@@ -172,32 +225,22 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
   });
 }
 
-function getFallbackMatches(userId: string, limit: number, filterType?: string): Promise<MatchResult[]> {
+function getFallbackMatches(userId: string, limit: number, userSearchType: string, filterType?: string): Promise<MatchResult[]> {
   return new Promise((resolve, reject) => {
-    let query = `SELECT id, username, nickname, avatar, bio, search_type FROM users WHERE id != ?`;
-    const params: any[] = [userId];
-    if (filterType === 'student' || filterType === 'mentor') {
-      query += ` AND (search_type = ? OR search_type = 'both')`;
-      params.push(filterType);
-    }
-    query += ` ORDER BY RANDOM() LIMIT ?`;
-    params.push(limit);
-
-    db.all(query, params, (err, users: any[]) => {
-      if (err) return reject(err);
-      const results: MatchResult[] = users.map((u: any) => ({
-        userId: u.id,
-        username: u.username,
-        nickname: u.nickname,
-        avatar: u.avatar,
-        bio: u.bio,
-        searchType: u.search_type || 'both',
-        similarity: 0,
-        sharedSkills: [],
-        matchReason: 'Популярный пользователь — загляните в профиль!',
-      }));
-      resolve(results);
-    });
+    const typeInfo = buildTypeClause(userSearchType, filterType);
+    db.all(
+      `SELECT id, username, nickname, avatar, bio, search_type FROM users
+       WHERE id != ? ${typeInfo.clause}
+       ORDER BY RANDOM() LIMIT ?`,
+      [userId, ...typeInfo.params, limit],
+      (err, users: any[]) => {
+        if (err) return reject(err);
+        const results: MatchResult[] = users.map((u: any) =>
+          buildMatchResult(u, 0, [])
+        );
+        resolve(results);
+      }
+    );
   });
 }
 
@@ -209,25 +252,19 @@ export function searchUsersBySkills(query: string, currentUserId: string, filter
       (err, matchedSkills: any[]) => {
         if (err) return reject(err);
 
-        const buildTypeClause = (tableAlias: string, prepend: string): string => {
-          if (filterType === 'student' || filterType === 'mentor') {
-            return `${prepend} (${tableAlias}.search_type = ? OR ${tableAlias}.search_type = 'both')`;
-          }
-          return '';
-        };
-
         const typeParams = (filterType === 'student' || filterType === 'mentor') ? [filterType] : [];
+
+        let typeClause = '';
+        if (filterType === 'student' || filterType === 'mentor') {
+          typeClause = `AND (search_type = ? OR search_type = 'both')`;
+        }
 
         if (matchedSkills.length === 0) {
           let nameQuery = `SELECT id, username, nickname, avatar, bio, search_type FROM users
              WHERE (username LIKE ? OR nickname LIKE ?) AND id != ?`;
-          const nameParams: any[] = [`%${query}%`, `%${query}%`, currentUserId];
-          const typeClause = buildTypeClause('', ' AND ');
-          if (typeClause) {
-            nameQuery += typeClause;
-            nameParams.push(...typeParams);
-          }
-          nameQuery += ` LIMIT 20`;
+          const nameParams: any[] = [`%${query}%`, `%${query}%`, currentUserId, ...typeParams];
+          if (typeClause) nameQuery += typeClause;
+          nameQuery += ` ORDER BY RANDOM() LIMIT 20`;
 
           db.all(nameQuery, nameParams, (err, users: any[]) => {
             if (err) return reject(err);
@@ -257,48 +294,43 @@ export function searchUsersBySkills(query: string, currentUserId: string, filter
               userSkillMap[row.user_id].add(row.skill_id);
             }
 
-            const uids = Object.keys(userSkillMap);
-            if (uids.length === 0) return resolve([]);
+            const matchedUids = Object.keys(userSkillMap);
 
-            const userPlaceholders = uids.map(() => '?').join(',');
+            const userPlaceholders = matchedUids.map(() => '?').join(',');
             let userQuery = `SELECT id, username, nickname, avatar, bio, search_type FROM users WHERE id IN (${userPlaceholders})`;
-            const userParams: any[] = [...uids];
-            const typeClause = buildTypeClause('', ' AND ');
-            if (typeClause) {
-              userQuery += typeClause;
-              userParams.push(...typeParams);
-            }
+            const userParams: any[] = [...matchedUids, ...typeParams];
+            if (typeClause) userQuery += typeClause;
 
             db.all(userQuery, userParams, (err, users: any[]) => {
               if (err) return reject(err);
-              const userMap: any = {};
-              for (const u of users) userMap[u.id] = u;
 
-              const results: MatchResult[] = uids
-                .filter(uid => userMap[uid])
-                .map(uid => {
-                  const u = userMap[uid];
-                  const sharedSkillNames = matchedSkills
-                    .filter((ms: any) => userSkillMap[uid].has(ms.id))
-                    .map((ms: any) => ({ name: ms.name, color: ms.color }));
+              const matchedUsers = (users || []).map((u: any) => {
+                const sharedSkillNames = matchedSkills
+                  .filter((ms: any) => userSkillMap[u.id]?.has(ms.id))
+                  .map((ms: any) => ({ name: ms.name, color: ms.color }));
+                const score = sharedSkillNames.length / Math.max(matchedSkills.length, 1);
+                return buildMatchResult(u, Math.round(score * 100) / 100, sharedSkillNames);
+              });
 
-                  const score = sharedSkillNames.length / Math.max(matchedSkills.length, 1);
+              matchedUsers.sort((a: MatchResult, b: MatchResult) => b.similarity - a.similarity);
 
-                  return {
-                    userId: uid,
-                    username: u?.username || 'неизвестно',
-                    nickname: u?.nickname || 'Неизвестно',
-                    avatar: u?.avatar || '',
-                    bio: u?.bio || '',
-                    searchType: u?.search_type || 'both',
-                    similarity: Math.round(score * 100) / 100,
-                    sharedSkills: sharedSkillNames,
-                    matchReason: score >= 0.5 ? 'Отличное совпадение по вашему запросу!' : 'Частично соответствует запросу.',
-                  };
-                });
+              if (matchedUsers.length >= 20) {
+                return resolve(matchedUsers.slice(0, 20));
+              }
 
-              results.sort((a, b) => b.similarity - a.similarity);
-              resolve(results.slice(0, 20));
+              const excludeIds = matchedUsers.map((u: MatchResult) => u.userId);
+              const exPlaceholders = [currentUserId, ...excludeIds].map(() => '?').join(',');
+              db.all(
+                `SELECT id, username, nickname, avatar, bio, search_type FROM users
+                 WHERE id NOT IN (${exPlaceholders}) ${typeClause}
+                 ORDER BY RANDOM() LIMIT ?`,
+                [...[currentUserId, ...excludeIds], ...typeParams, 20 - matchedUsers.length],
+                (err, fillRows: any[]) => {
+                  if (err) return reject(err);
+                  const filled = (fillRows || []).map((u: any) => buildMatchResult(u, 0, []));
+                  resolve([...matchedUsers, ...filled].slice(0, 20));
+                }
+              );
             });
           }
         );

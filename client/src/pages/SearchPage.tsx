@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { api } from '../services/api';
 import UserCard from '../components/UserCard';
 
@@ -21,15 +21,12 @@ export default function SearchPage() {
   const timerRef = useRef<number>(0);
 
   const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults([]);
-      setSearched(false);
-      return;
-    }
     setLoading(true);
     setSearched(true);
     try {
-      const data = await api.matching.search(q);
+      const data = q.trim()
+        ? await api.matching.search(q)
+        : await api.matching.getRecommendations();
       setResults(data);
     } catch {
       setResults([]);
@@ -43,6 +40,10 @@ export default function SearchPage() {
     clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => doSearch(value), 300);
   };
+
+  useEffect(() => {
+    doSearch('');
+  }, [doSearch]);
 
   return (
     <div className="min-h-screen pt-20 pb-12 px-6">
@@ -69,7 +70,7 @@ export default function SearchPage() {
           {query && (
             <button
               className="absolute right-4 top-1/2 -translate-y-1/2 opacity-30 hover:opacity-60"
-              onClick={() => { setQuery(''); setResults([]); setSearched(false); }}
+              onClick={() => { setQuery(''); doSearch(''); }}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -94,10 +95,10 @@ export default function SearchPage() {
           </div>
         )}
 
-        {!loading && results.length > 0 && (
+        {!loading && searched && results.length > 0 && (
           <div>
             <p className="text-sm opacity-40 mb-4">
-              Найдено: {results.length}
+              {query ? `Найдено: ${results.length}` : `Все пользователи: ${results.length}`}
             </p>
             <div className="space-y-4">
               {results.map((r) => (
@@ -107,7 +108,7 @@ export default function SearchPage() {
           </div>
         )}
 
-        {!searched && !loading && (
+        {!loading && !searched && (
           <div className="text-center py-16">
             <div className="text-6xl mb-4">⌨️</div>
             <h3 className="font-bold text-lg mb-2" style={{ color: '#1a1a2e' }}>
