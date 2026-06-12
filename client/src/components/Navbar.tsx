@@ -26,6 +26,7 @@ export default function Navbar() {
               <Link to="/dashboard" className="text-sm font-medium hover:opacity-70 transition-opacity">Главная</Link>
               <Link to="/search" className="text-sm font-medium hover:opacity-70 transition-opacity">Поиск</Link>
               <Link to="/sessions" className="text-sm font-medium hover:opacity-70 transition-opacity">Сессии</Link>
+              <Link to="/friends" className="text-sm font-medium hover:opacity-70 transition-opacity">Друзья</Link>
             </div>
 
             <div className="relative">
@@ -64,6 +65,9 @@ export default function Navbar() {
                     </Link>
                     <Link to="/sessions" className="block px-4 py-2.5 text-sm hover:bg-black/5 transition-colors" onClick={() => setMenuOpen(false)}>
                       Мои сессии
+                    </Link>
+                    <Link to="/friends" className="block px-4 py-2.5 text-sm hover:bg-black/5 transition-colors" onClick={() => setMenuOpen(false)}>
+                      Друзья
                     </Link>
                     <button
                       onClick={handleLogout}

@@ -1,39 +1,28 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
 import UserCard from '../components/UserCard';
 
-interface MatchResult {
-  userId: string;
-  username: string;
-  nickname: string;
-  avatar: string;
-  bio: string;
-  similarity: number;
-  sharedSkills: { name: string; color: string }[];
-  matchReason: string;
-}
-
 export default function SearchPage() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<MatchResult[]>([]);
+  const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<number>(0);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = async (q: string) => {
     setLoading(true);
     setSearched(true);
     try {
       const data = q.trim()
         ? await api.matching.search(q)
-        : await api.matching.getRecommendations();
+        : await api.users.getAll();
       setResults(data);
     } catch {
       setResults([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   const handleChange = (value: string) => {
     setQuery(value);
@@ -43,7 +32,7 @@ export default function SearchPage() {
 
   useEffect(() => {
     doSearch('');
-  }, [doSearch]);
+  }, []);
 
   return (
     <div className="min-h-screen pt-20 pb-12 px-6">

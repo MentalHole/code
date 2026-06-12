@@ -29,6 +29,7 @@ export const api = {
   users: {
     getProfile: (userId: string) => request(`/users/profile/${userId}`),
     updateProfile: (body: any) => request('/users/profile', { method: 'PUT', body: JSON.stringify(body) }),
+    getAll: () => request('/users/all'),
   },
   matching: {
     getRecommendations: () => request('/matching/recommendations'),
@@ -44,5 +45,20 @@ export const api = {
     get: (sessionId: string) => request(`/messages/${sessionId}`),
     send: (sessionId: string, content: string, type = 'text') =>
       request(`/messages/${sessionId}`, { method: 'POST', body: JSON.stringify({ content, type }) }),
+  },
+  sessionRequests: {
+    create: (body: any) => request('/session-requests', { method: 'POST', body: JSON.stringify(body) }),
+    accept: (id: string) => request(`/session-requests/${id}/accept`, { method: 'POST' }),
+    decline: (id: string) => request(`/session-requests/${id}/decline`, { method: 'POST' }),
+    pending: () => request('/session-requests/pending'),
+  },
+  friends: {
+    request: (toUserId: string) => request('/friends/request', { method: 'POST', body: JSON.stringify({ toUserId }) }),
+    accept: (id: string) => request(`/friends/${id}/accept`, { method: 'POST' }),
+    decline: (id: string) => request(`/friends/${id}/decline`, { method: 'POST' }),
+    remove: (friendUserId: string) => request('/friends/remove', { method: 'POST', body: JSON.stringify({ friendUserId }) }),
+    list: () => request('/friends/list'),
+    pending: () => request('/friends/pending'),
+    status: (otherUserId: string) => request(`/friends/status/${otherUserId}`),
   },
 };

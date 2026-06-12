@@ -30,6 +30,7 @@ export default function Profile() {
   const [form, setForm] = useState({ nickname: '', bio: '' });
   const [allSkills, setAllSkills] = useState<Skill[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [friendStatus, setFriendStatus] = useState<'none' | 'pending' | 'friends'>('none');
 
   const isOwnProfile = !userId || userId === currentUser?.id;
 
@@ -40,12 +41,14 @@ export default function Profile() {
     Promise.all([
       api.users.getProfile(targetId),
       isOwnProfile ? api.skills.getAll() : Promise.resolve([]),
+      isOwnProfile ? Promise.resolve(null) : api.friends.status(targetId).catch(() => null),
     ])
-      .then(([profileData, skillsData]) => {
+      .then(([profileData, skillsData, friendData]: any[]) => {
         setProfile(profileData);
         setForm({ nickname: profileData.nickname, bio: profileData.bio || '' });
         setSelectedSkills(profileData.skills?.map((s: any) => s.id) || []);
         setAllSkills(skillsData as Skill[]);
+        if (friendData) setFriendStatus(friendData.status === 'accepted' ? 'friends' : 'pending');
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -66,16 +69,25 @@ export default function Profile() {
     }
   };
 
+  const addFriend = async () => {
+    if (!profile) return;
+    try {
+      await api.friends.request(profile.id);
+      setFriendStatus('pending');
+    } catch {}
+  };
+
   const startSession = async () => {
     if (!profile || !currentUser) return;
     if (!profile.skills || profile.skills.length === 0) {
-      alert('This user has no skills listed');
+      alert('Этот пользователь не указал навыки');
       return;
     }
     const skillId = profile.skills[0].id;
+    const skillName = profile.skills[0].name;
     try {
-      const session = await api.sessions.create({ guestId: profile.id, skillId });
-      navigate(`/session/${session.id}`);
+      await api.sessionRequests.create({ toUserId: profile.id, skillId, skillName });
+      alert('Запрос на сессию отправлен!');
     } catch (err) {
       console.error(err);
     }
@@ -116,13 +128,28 @@ export default function Profile() {
             </div>
 
             {!isOwnProfile && currentUser && (
-              <button onClick={startSession} className="btn-primary !py-3 !px-6 !rounded-xl whitespace-nowrap">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Начать сессию
-              </button>
+              <div className="flex items-center gap-2">
+                {friendStatus === 'friends' && (
+                  <span className="text-xs font-semibold opacity-60 flex items-center gap-1">
+                    ✓ В друзьях
+                  </span>
+                )}
+                {friendStatus === 'pending' && (
+                  <span className="text-xs opacity-40">Запрос отправлен</span>
+                )}
+                {friendStatus === 'none' && (
+                  <button onClick={addFriend} className="btn-secondary !py-2 !px-3 !text-[11px] !rounded-xl whitespace-nowrap">
+                    + В друзья
+                  </button>
+                )}
+                <button onClick={startSession} className="btn-primary !py-3 !px-6 !rounded-xl whitespace-nowrap">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Начать сессию
+                </button>
+              </div>
             )}
           </div>
 

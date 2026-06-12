@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../services/api';
 import { getSocket } from '../services/socket';
 import { useAuth } from '../context/AuthContext';
+import { setCurrentSessionId } from '../utils/currentSession';
 import SessionTimer from '../components/SessionTimer';
 import ChatBox from '../components/ChatBox';
 
@@ -36,6 +37,7 @@ export default function SessionRoom() {
 
   useEffect(() => {
     if (!id) return;
+    setCurrentSessionId(id);
     api.sessions.get(id)
       .then(setSession)
       .catch(console.error)
@@ -45,6 +47,10 @@ export default function SessionRoom() {
     if (socket && id) {
       socket.emit('join:session', id);
     }
+
+    return () => {
+      setCurrentSessionId(null);
+    };
   }, [id]);
 
   const getMediaStream = async (mode: 'audio' | 'video') => {
@@ -86,6 +92,7 @@ export default function SessionRoom() {
     peer.ontrack = (event) => {
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.play().catch(() => {});
       }
       setRemoteStream(event.streams[0]);
     };
@@ -96,14 +103,24 @@ export default function SessionRoom() {
       }
     };
 
+    const onConnected = () => {
+      setCallStatus('connected');
+      setInCall(true);
+    };
+
+    const onFailed = () => {
+      console.error('WebRTC connection failed');
+      endCall();
+    };
+
     peer.onconnectionstatechange = () => {
-      if (peer.connectionState === 'connected') {
-        setCallStatus('connected');
-        setInCall(true);
-      } else if (peer.connectionState === 'failed') {
-        console.error('WebRTC connection failed');
-        endCall();
-      }
+      if (peer.connectionState === 'connected') onConnected();
+      else if (peer.connectionState === 'failed') onFailed();
+    };
+
+    peer.oniceconnectionstatechange = () => {
+      if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') onConnected();
+      else if (peer.iceConnectionState === 'failed') onFailed();
     };
 
     peerRef.current = peer;
@@ -317,12 +334,14 @@ export default function SessionRoom() {
                     ref={remoteVideoRef}
                     autoPlay
                     playsInline
+                    webkit-playsinline="true"
                     className="absolute inset-0 w-full h-full object-cover"
                   />
                   <video
                     ref={localVideoRef}
                     autoPlay
                     playsInline
+                    webkit-playsinline="true"
                     muted
                     className="absolute bottom-4 right-4 w-36 h-24 object-cover rounded-xl border-2 border-white shadow-lg"
                   />

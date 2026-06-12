@@ -11,6 +11,7 @@ import SearchPage from './pages/SearchPage';
 import Profile from './pages/Profile';
 import Sessions from './pages/Sessions';
 import SessionRoom from './pages/SessionRoom';
+import FriendsPage from './pages/FriendsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -30,6 +31,7 @@ function AppRoutes() {
       <Route path="/profile/:userId" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/sessions" element={<ProtectedRoute><Sessions /></ProtectedRoute>} />
       <Route path="/session/:id" element={<ProtectedRoute><SessionRoom /></ProtectedRoute>} />
+      <Route path="/friends" element={<ProtectedRoute><FriendsPage /></ProtectedRoute>} />
     </Routes>
   );
 }

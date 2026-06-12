@@ -81,6 +81,28 @@ db.serialize(() => {
     FOREIGN KEY (session_id) REFERENCES sessions(id),
     FOREIGN KEY (reviewer_id) REFERENCES users(id)
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS session_requests (
+    id TEXT PRIMARY KEY,
+    from_user_id TEXT NOT NULL,
+    to_user_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (from_user_id) REFERENCES users(id),
+    FOREIGN KEY (to_user_id) REFERENCES users(id),
+    FOREIGN KEY (skill_id) REFERENCES skills(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS friends (
+    id TEXT PRIMARY KEY,
+    requester_id TEXT NOT NULL,
+    addressee_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (requester_id) REFERENCES users(id),
+    FOREIGN KEY (addressee_id) REFERENCES users(id)
+  )`);
 });
 
 export default db;

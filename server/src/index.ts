@@ -5,13 +5,15 @@ import fs from 'fs';
 import http from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { seedSkills } from './utils/seed';
-import { seedProfiles } from './utils/seedProfiles';
+import { seedProfiles, seedTestSessions } from './utils/seedProfiles';
 import authRoutes from './routes/auth';
 import skillRoutes from './routes/skills';
 import userRoutes from './routes/users';
 import matchingRoutes from './routes/matching';
 import sessionRoutes from './routes/sessions';
 import messageRoutes from './routes/messages';
+import sessionRequestRoutes from './routes/sessionRequests';
+import friendRoutes from './routes/friends';
 
 const app = express();
 const server = http.createServer(app);
@@ -42,6 +44,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/matching', matchingRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/session-requests', sessionRequestRoutes);
+app.use('/api/friends', friendRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -168,6 +172,7 @@ server.listen(PORT, () => {
 seedSkills();
 seedProfiles().then(() => {
   console.log('Сид профилей завершён');
+  seedTestSessions();
 });
 
 export default app;

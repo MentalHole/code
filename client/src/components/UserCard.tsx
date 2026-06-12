@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 interface Skill {
   name: string;
@@ -18,12 +21,24 @@ interface Props {
 
 export default function UserCard({ userId, nickname, username, avatar, bio, similarity, sharedSkills, matchReason }: Props) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [friendStatus, setFriendStatus] = useState<'none' | 'pending' | 'friends' | 'self'>(
+    userId === user?.id ? 'self' : 'none'
+  );
 
   const similarityPercent = similarity !== undefined ? Math.round(similarity * 100) : undefined;
 
-  const startSession = async (e: React.MouseEvent) => {
+  const startSession = (e: React.MouseEvent) => {
     e.stopPropagation();
     navigate(`/profile/${userId}`);
+  };
+
+  const addFriend = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.friends.request(userId);
+      setFriendStatus('pending');
+    } catch {}
   };
 
   return (
@@ -89,6 +104,21 @@ export default function UserCard({ userId, nickname, username, avatar, bio, simi
       {matchReason && (
         <p className="text-[11px] mt-2 opacity-50 italic">{matchReason}</p>
       )}
+
+      <div className="mt-3 flex justify-end">
+        {friendStatus === 'none' && (
+          <button
+            onClick={addFriend}
+            className="text-[11px] opacity-50 hover:opacity-100 transition-opacity"
+            style={{ color: '#1a1a2e' }}
+          >
+            + Добавить в друзья
+          </button>
+        )}
+        {friendStatus === 'pending' && (
+          <span className="text-[11px] opacity-40">Запрос отправлен</span>
+        )}
+      </div>
     </div>
   );
 }
