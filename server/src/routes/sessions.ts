@@ -18,7 +18,7 @@ router.post('/', authMiddleware, (req: AuthRequest, res: Response) => {
   const endTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   db.run(
-    `INSERT INTO sessions (id, host_id, guest_id, skill_id, status, start_time, end_time) VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    `INSERT INTO sessions (id, host_id, guest_id, skill_id, status, start_time, end_time, host_role, guest_role) VALUES (?, ?, ?, ?, 'active', ?, ?, 'teacher', 'student')`,
     [id, req.userId, guestId, skillId, startTime, endTime],
     function (err) {
       if (err) {
@@ -65,6 +65,43 @@ router.get('/:id', authMiddleware, (req: AuthRequest, res: Response) => {
         return;
       }
       res.json(session);
+    }
+  );
+});
+
+router.post('/:id/switch-role', authMiddleware, (req: AuthRequest, res: Response) => {
+  db.get(`SELECT host_id, guest_id, host_role, guest_role FROM sessions WHERE id = ? AND (host_id = ? OR guest_id = ?)`,
+    [req.params.id, req.userId, req.userId],
+    (err, session: any) => {
+      if (err || !session) {
+        res.status(404).json({ error: 'Сессия не найдена' });
+        return;
+      }
+      const newHostRole = session.host_role === 'teacher' ? 'student' : 'teacher';
+      const newGuestRole = session.guest_role === 'teacher' ? 'student' : 'teacher';
+      db.run(
+        `UPDATE sessions SET host_role = ?, guest_role = ? WHERE id = ?`,
+        [newHostRole, newGuestRole, req.params.id],
+        function () {
+          const io = req.app.get('io');
+          io.to(`session:${req.params.id}`).emit('session:role_switched', {
+            hostRole: newHostRole,
+            guestRole: newGuestRole,
+            switchedBy: req.userId,
+          });
+          res.json({ hostRole: newHostRole, guestRole: newGuestRole });
+        }
+      );
+    }
+  );
+});
+
+router.post('/:id/track-time', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { seconds } = req.body;
+  db.run(`UPDATE sessions SET seconds_elapsed = COALESCE(seconds_elapsed, 0) + ? WHERE id = ? AND (host_id = ? OR guest_id = ?)`,
+    [seconds || 0, req.params.id, req.userId, req.userId],
+    function () {
+      res.json({ ok: true });
     }
   );
 });

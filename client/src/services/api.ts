@@ -40,6 +40,8 @@ export const api = {
     getAll: () => request('/sessions'),
     get: (id: string) => request(`/sessions/${id}`),
     end: (id: string) => request(`/sessions/${id}/end`, { method: 'POST' }),
+    switchRole: (id: string) => request(`/sessions/${id}/switch-role`, { method: 'POST' }),
+    trackTime: (id: string, seconds: number) => request(`/sessions/${id}/track-time`, { method: 'POST', body: JSON.stringify({ seconds }) }),
   },
   messages: {
     get: (sessionId: string) => request(`/messages/${sessionId}`),
@@ -60,5 +62,10 @@ export const api = {
     list: () => request('/friends/list'),
     pending: () => request('/friends/pending'),
     status: (otherUserId: string) => request(`/friends/status/${otherUserId}`),
+  },
+  subscriptions: {
+    status: () => request('/subscriptions/status'),
+    upgrade: (cardData: any) => request('/subscriptions/upgrade', { method: 'POST', body: JSON.stringify(cardData) }),
+    cancel: () => request('/subscriptions/cancel', { method: 'POST' }),
   },
 };

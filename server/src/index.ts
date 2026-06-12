@@ -14,6 +14,7 @@ import sessionRoutes from './routes/sessions';
 import messageRoutes from './routes/messages';
 import sessionRequestRoutes from './routes/sessionRequests';
 import friendRoutes from './routes/friends';
+import subscriptionRoutes from './routes/subscriptions';
 
 const app = express();
 const server = http.createServer(app);
@@ -46,6 +47,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/session-requests', sessionRequestRoutes);
 app.use('/api/friends', friendRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

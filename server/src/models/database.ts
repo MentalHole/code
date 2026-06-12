@@ -103,6 +103,30 @@ db.serialize(() => {
     FOREIGN KEY (requester_id) REFERENCES users(id),
     FOREIGN KEY (addressee_id) REFERENCES users(id)
   )`);
+
+  // Add role columns to sessions if not present
+  db.run(`ALTER TABLE sessions ADD COLUMN host_role TEXT DEFAULT 'teacher'`, () => {});
+  db.run(`ALTER TABLE sessions ADD COLUMN guest_role TEXT DEFAULT 'student'`, () => {});
+  db.run(`ALTER TABLE sessions ADD COLUMN seconds_elapsed INTEGER DEFAULT 0`, () => {});
+
+  db.run(`CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    plan TEXT DEFAULT 'free',
+    start_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    end_date DATETIME,
+    active INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // Seed free subscriptions for all users
+  db.all(`SELECT id FROM users`, (err, users: any[]) => {
+    if (users) {
+      for (const u of users) {
+        db.run(`INSERT OR IGNORE INTO subscriptions (id, user_id, plan, active) VALUES (?, ?, 'free', 1)`, [u.id + '_sub', u.id]);
+      }
+    }
+  });
 });
 
 export default db;

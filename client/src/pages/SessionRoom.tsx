@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { setCurrentSessionId } from '../utils/currentSession';
 import SessionTimer from '../components/SessionTimer';
 import ChatBox from '../components/ChatBox';
+import SubscriptionUpgradeModal from '../components/SubscriptionUpgradeModal';
 
 interface Session {
   id: string;
@@ -15,7 +16,12 @@ interface Session {
   status: string;
   start_time: string;
   end_time: string;
+  host_role?: string;
+  guest_role?: string;
+  seconds_elapsed?: number;
 }
+
+const FREE_LIMIT = 3600;
 
 export default function SessionRoom() {
   const { id } = useParams<{ id: string }>();
@@ -34,14 +40,29 @@ export default function SessionRoom() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const [inCall, setInCall] = useState(false);
   const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'ringing' | 'connecting' | 'connected'>('idle');
+  const [myRole, setMyRole] = useState<'teacher' | 'student'>('teacher');
+  const [otherRole, setOtherRole] = useState<'teacher' | 'student'>('student');
+  const [elapsedSecs, setElapsedSecs] = useState(0);
+  const [subscriptionPlan, setSubscriptionPlan] = useState<'free' | 'premium'>('free');
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!id) return;
     setCurrentSessionId(id);
     api.sessions.get(id)
-      .then(setSession)
+      .then((s: Session) => {
+        setSession(s);
+        if (user) {
+          setMyRole(user.id === s.host_id ? (s.host_role as 'teacher' | 'student' || 'teacher') : (s.guest_role as 'teacher' | 'student' || 'student'));
+          setOtherRole(user.id === s.host_id ? (s.guest_role as 'teacher' | 'student' || 'student') : (s.host_role as 'teacher' | 'student' || 'teacher'));
+        }
+        setElapsedSecs(s.seconds_elapsed || 0);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
+
+    api.subscriptions.status().then((sub: any) => setSubscriptionPlan(sub.plan)).catch(() => {});
 
     const socket = getSocket();
     if (socket && id) {
@@ -51,7 +72,7 @@ export default function SessionRoom() {
     return () => {
       setCurrentSessionId(null);
     };
-  }, [id]);
+  }, [id, user]);
 
   const getMediaStream = async (mode: 'audio' | 'video') => {
     return navigator.mediaDevices.getUserMedia({
@@ -205,6 +226,42 @@ export default function SessionRoom() {
     };
   }, [session, user, setupPeerFromOffer, endCall]);
 
+  const switchRole = async () => {
+    if (!id) return;
+    try {
+      await api.sessions.switchRole(id);
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!session || !id) return;
+    const socket = getSocket();
+    if (!socket) return;
+    const onRoleSwitched = ({ hostRole, guestRole }: any) => {
+      if (!user) return;
+      setMyRole(user.id === session.host_id ? hostRole : guestRole);
+      setOtherRole(user.id === session.host_id ? guestRole : hostRole);
+    };
+    socket.on('session:role_switched', onRoleSwitched);
+    return () => { socket.off('session:role_switched', onRoleSwitched); };
+  }, [session, user, id]);
+
+  // Track elapsed time every 10s while session is active
+  useEffect(() => {
+    if (!session || session.status !== 'active') return;
+    timerRef.current = setInterval(() => {
+      setElapsedSecs(prev => {
+        const next = prev + 10;
+        // Report elapsed time to server every 30s
+        if (next % 30 === 0 && id) {
+          api.sessions.trackTime(id, 10).catch(() => {});
+        }
+        return next;
+      });
+    }, 10000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [session, id]);
+
   const endSession = async () => {
     if (!id) return;
     try {
@@ -303,14 +360,36 @@ export default function SessionRoom() {
   return (
     <div className="min-h-screen pt-16 pb-4 px-4">
       <div className="max-w-6xl mx-auto h-[calc(100vh-8rem)]">
-        <div className="flex items-center justify-between mb-4">
-          <div>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <div className="flex items-center gap-3">
             <h1 className="font-bold text-lg" style={{ color: '#1a1a2e' }}>Учебная сессия</h1>
-            <p className="text-xs opacity-40">ID: {session.id.slice(0, 8)}</p>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+              style={{ background: myRole === 'teacher' ? '#e0f2fe' : '#fef3c7', color: myRole === 'teacher' ? '#0369a1' : '#b45309' }}>
+              {myRole === 'teacher' ? '👨‍🏫 Учитель' : '👨‍🎓 Ученик'}
+            </span>
+            {isActive && (
+              <button onClick={switchRole} className="text-[10px] opacity-40 hover:opacity-80 transition-opacity">
+                Поменяться
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            {isActive && session.end_time && (
-              <SessionTimer endTime={session.end_time} onEnd={() => {}} />
+            {isActive && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono" style={{ color: elapsedSecs >= FREE_LIMIT && subscriptionPlan === 'free' ? '#ef4444' : '#1a1a2e' }}>
+                  {Math.floor(elapsedSecs / 60)}:{String(elapsedSecs % 60).padStart(2, '0')}
+                  {subscriptionPlan === 'free' && <span className="opacity-40 ml-1">/ {Math.floor(FREE_LIMIT / 60)}:00</span>}
+                </span>
+                {elapsedSecs >= FREE_LIMIT && subscriptionPlan === 'free' && (
+                  <button onClick={() => setShowUpgrade(true)} className="px-2 py-1 rounded-full text-[10px] font-semibold text-white"
+                    style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+                    ⭐ Premium
+                  </button>
+                )}
+                {subscriptionPlan === 'premium' && (
+                  <span className="text-[10px] font-semibold opacity-50">⭐ Premium</span>
+                )}
+              </div>
             )}
             {isActive && (
               <button onClick={endSession} className="btn-secondary !py-2 !px-4 !text-xs !border-red-200 !text-red-600 hover:!bg-red-50">
@@ -462,6 +541,7 @@ export default function SessionRoom() {
           </div>
         </div>
       </div>
+      {showUpgrade && <SubscriptionUpgradeModal onClose={() => { setShowUpgrade(false); api.subscriptions.status().then((s: any) => setSubscriptionPlan(s.plan)); }} />}
     </div>
   );
 }

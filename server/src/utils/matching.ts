@@ -9,6 +9,19 @@ interface SkillVector {
   [skillId: string]: number;
 }
 
+const THEMES: { name: string; keywords: string[] }[] = [
+  { name: 'music', keywords: ['guitar', 'piano', 'violin', 'drums', 'jazz', 'singing', 'вокал', 'музыка', 'гитара', 'фортепиано', 'скрипка', 'флейта', 'песни', 'choir', 'orchestra', 'classical'] },
+  { name: 'sports', keywords: ['running', 'marathon', 'cycling', 'swimming', 'yoga', 'fitness', 'boxing', 'hiking', 'tennis', 'skiing', 'jogging', 'training', 'спорт', 'бег', 'йога', 'фитнес', 'бокс', 'плавание', 'теннис'] },
+  { name: 'art', keywords: ['drawing', 'painting', 'calligraphy', 'photography', 'sketch', 'illustration', 'акварель', 'рисование', 'каллиграфия', 'фотография', 'art', 'gallery', 'exhibition'] },
+  { name: 'food', keywords: ['cooking', 'cuisine', 'baking', 'chef', 'recipes', 'gastronomy', 'кулинария', 'рецепты', 'еда', 'готовка', 'pizzaiolo', 'pâtissière', 'spices'] },
+  { name: 'travel', keywords: ['travel', 'backpacking', 'culture', 'expedition', 'путешествия', 'traveling', 'wanderlust', 'adventure', 'exploring'] },
+  { name: 'nature', keywords: ['hiking', 'mountains', 'outdoors', 'nature', 'природа', 'trail', 'forest', 'camping', 'растения', 'garden'] },
+  { name: 'reading', keywords: ['books', 'literature', 'reading', 'poetry', 'writing', 'novel', 'book', 'novels', 'library', 'книги', 'литература', 'поэзия', 'писатель'] },
+  { name: 'gaming', keywords: ['chess', 'gaming', 'game dev', 'games', 'retro', 'indie', 'steam', 'tournaments', 'шахматы', 'игры', 'геймдев'] },
+  { name: 'mindfulness', keywords: ['meditation', 'mindfulness', 'tai chi', 'capoeira', 'yoga', 'zen', 'mindful', 'релакс', 'медитация'] },
+  { name: 'teaching', keywords: ['teaching', 'mentoring', 'coach', 'training', 'education', 'teaching', 'mentor', 'преподаю', 'обучаю', 'наставляю', 'coach'] },
+];
+
 function textSimilarity(textA: string, textB: string): number {
   const wordsA = new Set(textA.toLowerCase().split(/[\s,]+/));
   const wordsB = new Set(textB.toLowerCase().split(/[\s,]+/));
@@ -18,6 +31,48 @@ function textSimilarity(textA: string, textB: string): number {
   }
   const union = Math.max(wordsA.size, wordsB.size);
   return union > 0 ? intersection / union : 0;
+}
+
+function hiddenConnectionScore(textA: string, textB: string): number {
+  const lowerA = textA.toLowerCase();
+  const lowerB = textB.toLowerCase();
+  let matchedThemes = 0;
+  let reason = '';
+  for (const theme of THEMES) {
+    const aHas = theme.keywords.some(k => lowerA.includes(k));
+    const bHas = theme.keywords.some(k => lowerB.includes(k));
+    if (aHas && bHas) {
+      matchedThemes++;
+      if (!reason) reason = theme.name;
+    }
+  }
+  return matchedThemes > 0 ? Math.min(0.3, matchedThemes * 0.08) : 0;
+}
+
+function getHiddenConnectionReason(textA: string, textB: string): string {
+  const lowerA = textA.toLowerCase();
+  const lowerB = textB.toLowerCase();
+  const matched: string[] = [];
+  for (const theme of THEMES) {
+    const aHas = theme.keywords.some(k => lowerA.includes(k));
+    const bHas = theme.keywords.some(k => lowerB.includes(k));
+    if (aHas && bHas) matched.push(theme.name);
+  }
+  if (matched.length === 0) return '';
+  const labels: Record<string, string> = {
+    music: 'общая любовь к музыке',
+    sports: 'интерес к спорту',
+    art: 'творческие интересы',
+    food: 'любовь к кулинарии',
+    travel: 'страсть к путешествиям',
+    nature: 'любовь к природе',
+    reading: 'интерес к литературе',
+    gaming: 'любовь к играм',
+    mindfulness: 'интерес к осознанности',
+    teaching: 'менторский подход',
+  };
+  if (matched.length === 1) return `Объединяет ${labels[matched[0]] || matched[0]}`;
+  return `Общие увлечения: ${matched.slice(0, 2).map(m => labels[m] || m).join(', ')}`;
 }
 
 function cosineSimilarity(a: SkillVector, b: SkillVector): number {
@@ -67,20 +122,12 @@ function buildTypeClause(userSearchType: string, filterType?: string): { clause:
   return { clause: '', params: [] };
 }
 
-function buildMatchResult(user: any, similarity: number, sharedSkills: { name: string; color: string }[]): MatchResult {
-  let matchReason = '';
-  if (similarity > 0) {
-    if (similarity >= 0.7) matchReason = 'Отличное совпадение навыков!';
-    else if (similarity >= 0.5) matchReason = 'Хорошее пересечение навыков.';
-    else if (similarity >= 0.3) matchReason = 'Есть общие интересы.';
-    else matchReason = 'Небольшое совпадение, но может быть интересно.';
-  } else {
-    matchReason = 'Разные навыки — отличный шанс научиться новому!';
-  }
+function buildMatchResult(user: any, similarity: number, sharedSkills: { name: string; color: string }[], hiddenReason: string = ''): MatchResult {
   return {
     userId: user.id, username: user.username, nickname: user.nickname,
     avatar: user.avatar || '', bio: user.bio || '', searchType: user.search_type || 'both',
-    similarity, sharedSkills: sharedSkills.slice(0, 5), matchReason,
+    similarity, sharedSkills: sharedSkills.slice(0, 5),
+    matchReason: buildMatchReason(similarity, hiddenReason, sharedSkills),
   };
 }
 
@@ -93,9 +140,19 @@ function computeCombinedSimilarity(
 ): number {
   const skillSim = cosineSimilarity(userVector, otherVector);
   const bioSim = textSimilarity(userBio, otherBio);
+  const hiddenBio = hiddenConnectionScore(userBio, otherBio);
   const typeBonus = searchTypeBonus(userSearchType, otherSearchType);
   const skillBalance = userSkillCount > 0 ? 1 - (Math.abs(userSkillCount - Object.keys(otherVector).length) / (userSkillCount + 3)) : 0;
-  return skillSim * 0.7 + bioSim * 0.15 + typeBonus * 0.1 + skillBalance * 0.05 + friendBoost;
+  return skillSim * 0.55 + bioSim * 0.15 + hiddenBio * 0.15 + typeBonus * 0.1 + skillBalance * 0.05 + friendBoost;
+}
+
+function buildMatchReason(similarity: number, hiddenReason: string, sharedSkills: { name: string; color: string }[]): string {
+  if (similarity >= 0.7) return 'Отличное совпадение навыков!';
+  if (similarity >= 0.5) return 'Хорошее пересечение навыков.';
+  if (hiddenReason) return hiddenReason;
+  if (sharedSkills.length > 0) return 'Есть общие интересы.';
+  if (similarity > 0) return 'Небольшое совпадение, но может быть интересно.';
+  return 'Разные навыки — отличный шанс научиться новому!';
 }
 
 export function findMatchesForUser(userId: string, limit: number = 20, filterType?: string): Promise<MatchResult[]> {
@@ -170,6 +227,7 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
                         const scored = uids.filter(uid => validUserIds.has(uid)).map(uid => {
                           const otherUser = userMap[uid];
                           const otherVector = buildSkillVector(userScores[uid]);
+                          const otherBio = otherUser?.bio || '';
 
                           let friendBoost = 0;
                           if (friendIds.has(uid)) {
@@ -183,10 +241,11 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
                           }
 
                           const similarity = computeCombinedSimilarity(
-                            userVector, otherVector, userBio, otherUser?.bio || '',
+                            userVector, otherVector, userBio, otherBio,
                             userSearchType, otherUser?.search_type || 'both', userSkillCount, friendBoost
                           );
-                          return { userId: uid, similarity };
+                          const hiddenReason = similarity < 0.5 ? getHiddenConnectionReason(userBio, otherBio) : '';
+                          return { userId: uid, similarity, hiddenReason };
                         });
 
                         scored.sort((a, b) => b.similarity - a.similarity);
@@ -206,7 +265,7 @@ export function findMatchesForUser(userId: string, limit: number = 20, filterTyp
                             const shared = allRows
                               .filter((r: any) => r.user_id === c.userId && userSkillIds.includes(r.skill_id) && skillMap[r.skill_id])
                               .map((r: any) => ({ name: skillMap[r.skill_id].name, color: skillMap[r.skill_id].color }));
-                            return buildMatchResult(u, Math.round(c.similarity * 100) / 100, shared);
+                            return buildMatchResult(u, Math.round(c.similarity * 100) / 100, shared, c.hiddenReason || '');
                           });
 
                           if (results.length >= limit) return resolve(results);
